@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Now Playing">
+<meta name="theme-color" content="#000000">
+<title>Now Playing</title>
+<style>
+  :root { --art: min(86vw, 86vh); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    -webkit-user-select: none; user-select: none; }
+
+  .slide { position: fixed; inset: 0; opacity: 0; transition: opacity 1.2s ease; }
+  .slide.on { opacity: 1; }
+  .bg { position: absolute; inset: -12%; background-size: cover; background-position: center;
+    filter: blur(60px) saturate(1.4) brightness(0.55); transform: scale(1.1); }
+  .art { position: absolute; top: 50%; left: 50%; width: var(--art); height: var(--art);
+    transform: translate(-50%, -50%); object-fit: cover; border-radius: 6px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.55); transition: opacity .8s, filter .8s, top .6s, width .6s, height .6s; }
+  .art[src=""] { display: none; }
+
+  body.info { --art: min(80vw, 70vh); }
+  body.info .art { top: 44%; }
+  #info { position: fixed; left: 0; right: 0; bottom: 5vh; text-align: center; padding: 0 6vw;
+    opacity: 0; transition: opacity .6s; pointer-events: none; }
+  body.info #info { opacity: 1; }
+  #track { font-size: clamp(18px, 3.2vh, 34px); font-weight: 700; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  #artist { font-size: clamp(14px, 2.4vh, 24px); opacity: .75; margin-top: .3em; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+
+  #clock { position: fixed; top: max(20px, env(safe-area-inset-top)); right: 24px;
+    font-size: clamp(16px, 2.6vh, 28px); font-weight: 600; opacity: 0; transition: all .8s;
+    font-variant-numeric: tabular-nums; text-shadow: 0 2px 12px rgba(0,0,0,.5); pointer-events: none; }
+  body.clock #clock { opacity: .85; }
+
+  body.idle .art { opacity: .3; filter: grayscale(.5); }
+  body.idle #clock { opacity: 1; top: 50%; right: 50%; transform: translate(50%, -50%);
+    font-size: clamp(60px, 18vh, 220px); font-weight: 200; }
+  body.idle #info { opacity: 0; }
+
+  #menu { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px);
+    display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; opacity: 0;
+    pointer-events: none; transition: all .3s; z-index: 5; width: max-content; max-width: 92vw; }
+  #menu.show { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+  button { font: inherit; font-size: 15px; color: #fff; background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.2); border-radius: 999px; padding: 10px 16px;
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); cursor: pointer; }
+  button.primary { background: #1ed760; color: #000; border: none; font-weight: 700; }
+
+  #setup { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    padding: 24px; background: #0b0b0b; z-index: 10; -webkit-user-select: text; user-select: text; }
+  #setup.show { display: flex; }
+  .card { width: 100%; max-width: 480px; }
+  .card h1 { font-size: 26px; margin: 0 0 8px; }
+  .card p { opacity: .7; line-height: 1.45; margin: 0 0 18px; font-size: 15px; }
+  label { display: block; font-size: 13px; opacity: .6; margin: 14px 0 6px; }
+  input, .uri { width: 100%; font: inherit; font-size: 15px; color: #fff; background: #1a1a1a;
+    border: 1px solid #333; border-radius: 10px; padding: 12px; }
+  .uri { word-break: break-all; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .row { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+  #err { color: #ff6b6b; font-size: 14px; margin-top: 14px; min-height: 1em; }
+</style>
+</head>
+<body>
+  <div class="slide on" id="s0"><div class="bg"></div><img class="art" src="" alt=""></div>
+  <div class="slide" id="s1"><div class="bg"></div><img class="art" src="" alt=""></div>
+
+  <div id="info"><div id="track"></div><div id="artist"></div></div>
+  <div id="clock"></div>
+
+  <div id="menu">
+    <button id="bInfo">Info</button>
+    <button id="bClock">Reloj</button>
+    <button id="bFull">Pantalla completa</button>
+    <button id="bOut">Desconectar</button>
+  </div>
+
+  <div id="setup">
+    <div class="card">
+      <h1>Now Playing</h1>
+      <p>Muestra la carátula de lo que suena en tu Spotify. Pega el Client ID de tu app de Spotify y registra en ella la Redirect URI de abajo, exactamente igual.</p>
+      <label>Client ID</label>
+      <input id="cid" placeholder="ej. 3f9a1c...">
+      <label>Redirect URI (cópiala en el dashboard de Spotify)</label>
+      <div class="uri" id="uri"></div>
+      <div class="row">
+        <button id="bCopy">Copiar URI</button>
+        <button class="primary" id="bLogin">Conectar con Spotify</button>
+      </div>
+      <div id="err"></div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  var SCOPES = 'user-read-currently-playing user-read-playback-state';
+  var REDIRECT = location.origin + location.pathname;
+  var POLL_MS = 4000;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var store = {
+    get: function (k) { try { return localStorage.getItem('np_' + k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem('np_' + k, v); } catch (e) {} },
+    del: function (k) { try { localStorage.removeItem('np_' + k); } catch (e) {} }
+  };
+
+  // ---------- Ajustes de vista ----------
+  function applyPrefs() {
+    document.body.classList.toggle('info', store.get('info') !== '0');
+    document.body.classList.toggle('clock', store.get('clock') === '1');
+  }
+  applyPrefs();
+
+  // ---------- Auth (PKCE, sin servidor) ----------
+  function rand(n) {
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    var a = new Uint8Array(n); crypto.getRandomValues(a);
+    var s = ''; for (var i = 0; i < n; i++) s += chars[a[i] % chars.length]; return s;
+  }
+  function b64url(buf) {
+    var b = new Uint8Array(buf), s = '';
+    for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  async function login() {
+    var cid = $('cid').value.trim();
+    if (!cid) { $('err').textContent = 'Falta el Client ID.'; return; }
+    store.set('cid', cid);
+    var verifier = rand(64);
+    store.set('verifier', verifier);
+    var digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    var p = new URLSearchParams({
+      client_id: cid, response_type: 'code', redirect_uri: REDIRECT,
+      code_challenge_method: 'S256', code_challenge: b64url(digest), scope: SCOPES
+    });
+    location.href = 'https://accounts.spotify.com/authorize?' + p.toString();
+  }
+  async function tokenRequest(body) {
+    var r = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body)
+    });
+    var j = await r.json();
+    if (!r.ok) throw new Error(j.error_description || j.error || 'Error de token');
+    store.set('access', j.access_token);
+    store.set('expires', String(Date.now() + (j.expires_in - 60) * 1000));
+    if (j.refresh_token) store.set('refresh', j.refresh_token);
+  }
+  async function handleCallback() {
+    var q = new URLSearchParams(location.search);
+    if (q.get('error')) { history.replaceState(null, '', REDIRECT); throw new Error('Spotify: ' + q.get('error')); }
+    var code = q.get('code');
+    if (!code) return;
+    history.replaceState(null, '', REDIRECT);
+    await tokenRequest({
+      grant_type: 'authorization_code', code: code, redirect_uri: REDIRECT,
+      client_id: store.get('cid'), code_verifier: store.get('verifier')
+    });
+    store.del('verifier');
+  }
+  async function refresh() {
+    await tokenRequest({ grant_type: 'refresh_token', refresh_token: store.get('refresh'), client_id: store.get('cid') });
+  }
+  async function token() {
+    if (!store.get('access') || Date.now() > Number(store.get('expires') || 0)) await refresh();
+    return store.get('access');
+  }
+  function logout() {
+    ['access', 'refresh', 'expires'].forEach(store.del);
+    showSetup();
+  }
+
+  // ---------- Pantalla ----------
+  var current = '', slot = 0;
+  function showArt(url) {
+    if (!url || url === current) return;
+    current = url;
+    var img = new Image();
+    img.onload = function () {
+      slot = 1 - slot;
+      var s = $('s' + slot);
+      s.querySelector('.bg').style.backgroundImage = 'url("' + url + '")';
+      s.querySelector('.art').src = url;
+      s.classList.add('on');
+      $('s' + (1 - slot)).classList.remove('on');
+    };
+    img.src = url;
+  }
+  function setIdle(idle) { document.body.classList.toggle('idle', idle); }
+
+  async function poll() {
+    var wait = POLL_MS;
+    try {
+      var t = await token();
+      var r = await fetch('https://api.spotify.com/v1/me/player/currently-playing?additional_types=episode', {
+        headers: { Authorization: 'Bearer ' + t }
+      });
+      if (r.status === 401) { store.set('expires', '0'); wait = 500; }
+      else if (r.status === 429) { wait = (Number(r.headers.get('Retry-After')) || 10) * 1000; }
+      else if (r.status === 204) { setIdle(true); }
+      else if (r.ok) {
+        var j = await r.json();
+        var it = j.item;
+        if (!it) { setIdle(true); }
+        else {
+          var imgs = (it.album && it.album.images) || it.images || [];
+          if (imgs.length) showArt(imgs[0].url);
+          $('track').textContent = it.name || '';
+          $('artist').textContent = it.artists ? it.artists.map(function (a) { return a.name; }).join(', ')
+            : (it.show ? it.show.name : '');
+          setIdle(!j.is_playing);
+        }
+      }
+    } catch (e) {
+      if (/refresh|invalid_grant|revoked/i.test(e.message)) { logout(); $('err').textContent = 'La sesión expiró, vuelve a conectar.'; return; }
+      wait = 10000; // sin internet: reintenta
+    }
+    setTimeout(poll, wait);
+  }
+
+  function tick() {
+    $('clock').textContent = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  }
+  setInterval(tick, 5000); tick();
+
+  // Mantener la pantalla encendida
+  var lock = null;
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator && !lock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', function () { lock = null; }); } } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) keepAwake(); });
+
+  // Menú al tocar la pantalla
+  var menuTimer;
+  document.addEventListener('click', function (e) {
+    keepAwake();
+    if ($('setup').classList.contains('show')) return;
+    if (e.target.tagName === 'BUTTON') return;
+    $('menu').classList.add('show');
+    clearTimeout(menuTimer);
+    menuTimer = setTimeout(function () { $('menu').classList.remove('show'); }, 5000);
+  });
+  $('bInfo').onclick = function () { store.set('info', store.get('info') === '0' ? '1' : '0'); applyPrefs(); };
+  $('bClock').onclick = function () { store.set('clock', store.get('clock') === '1' ? '0' : '1'); applyPrefs(); };
+  $('bFull').onclick = function () {
+    var d = document.documentElement;
+    (d.requestFullscreen || d.webkitRequestFullscreen || function () {}).call(d);
+  };
+  $('bOut').onclick = logout;
+
+  // Setup
+  function showSetup() {
+    $('cid').value = store.get('cid') || '';
+    $('uri').textContent = REDIRECT;
+    $('setup').classList.add('show');
+  }
+  $('bLogin').onclick = login;
+  $('bCopy').onclick = function () {
+    try { navigator.clipboard.writeText(REDIRECT); $('bCopy').textContent = 'Copiada ✓'; } catch (e) {}
+  };
+
+  // Inicio
+  (async function start() {
+    try { await handleCallback(); } catch (e) { showSetup(); $('err').textContent = e.message; return; }
+    if (!store.get('refresh') || !store.get('cid')) { showSetup(); return; }
+    $('setup').classList.remove('show');
+    keepAwake();
+    poll();
+  })();
+})();
+</script>
+</body>
+</html>
