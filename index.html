@@ -46,14 +46,17 @@
   body.clock #clock { opacity: .9; }
 
   /* ---------- Vista Gigante: portada a toda pantalla que se desplaza ---------- */
+  /* --giant: tamaño de la portada (más bajo = menos zoom). --pan: duración de una vuelta completa (más bajo = más rápido) */
+  body.mode-giant { --giant: 112vmax; --pan: 45s; }
   body.mode-giant .bg { display: none; }
-  body.mode-giant .art { top: 0; left: 0; width: 130vmax; height: 130vmax; border-radius: 0;
-    box-shadow: none; transform: none; animation: pan 100s ease-in-out infinite; }
+  body.mode-giant .art { top: 0; left: 0; width: var(--giant); height: var(--giant); border-radius: 0;
+    box-shadow: none; transform: none; animation: pan var(--pan) ease-in-out infinite; animation-play-state: running; }
+  body.mode-giant.idle .art { animation-play-state: running; }
   @keyframes pan {
     0%, 100% { transform: translate(0, 0); }
-    25% { transform: translate(calc(100vw - 130vmax), 0); }
-    50% { transform: translate(calc(100vw - 130vmax), calc(100vh - 130vmax)); }
-    75% { transform: translate(0, calc(100vh - 130vmax)); }
+    25% { transform: translate(calc(100vw - var(--giant)), 0); }
+    50% { transform: translate(calc(100vw - var(--giant)), calc(100vh - var(--giant))); }
+    75% { transform: translate(0, calc(100vh - var(--giant))); }
   }
   body.mode-giant #info { left: 5vw; right: 5vw; text-align: left; text-shadow: 0 2px 20px rgba(0,0,0,.8); }
 
@@ -83,6 +86,20 @@
   body.idle #clock { opacity: 1; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%);
     font-size: clamp(64px, 19vh, 230px); font-weight: 700; letter-spacing: -0.02em; }
   body.idle #info { opacity: 0; }
+
+  /* ---------- Reposo: pantalla negra ---------- */
+  #sleep { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none;
+    transition: opacity 2s; z-index: 8; }
+  body.sleep #sleep { opacity: 1; pointer-events: auto; }
+
+  /* ---------- Panel de ajustes ---------- */
+  #prefs { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    padding: 24px; background: rgba(0,0,0,.88); z-index: 11; }
+  #prefs.show { display: flex; }
+  .pref { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    padding: 12px 0; border-bottom: 1px solid #222; font-size: 16px; }
+  .pref input { width: 130px; flex: none; }
+  .pref input[type=checkbox] { width: 24px; height: 24px; accent-color: #1ed760; }
 
   /* ---------- Menú ---------- */
   #menu { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px);
@@ -120,8 +137,23 @@
     <button id="bMode">Vista</button>
     <button id="bInfo">Info</button>
     <button id="bClock">Reloj</button>
+    <button id="bPrefs">Ajustes</button>
     <button id="bFull">Pantalla completa</button>
     <button id="bOut">Desconectar</button>
+  </div>
+
+  <div id="sleep"></div>
+
+  <div id="prefs">
+    <div class="card">
+      <h1>Ajustes</h1>
+      <div class="pref"><span>Usar horario</span><input type="checkbox" id="pSched"></div>
+      <div class="pref"><span>Desde</span><input type="time" id="pFrom"></div>
+      <div class="pref"><span>Hasta</span><input type="time" id="pTo"></div>
+      <div class="pref"><span>Apagar tras minutos sin música</span><input type="number" id="pIdle" min="1" max="120" inputmode="numeric"></div>
+      <p style="margin-top:16px">Fuera del horario, o si no suena nada durante ese tiempo, la pantalla se pone negra. Vuelve sola cuando suena música dentro del horario. Tocar la pantalla negra la enciende por 5 minutos.</p>
+      <div class="row"><button class="primary" id="pSave">Listo</button></div>
+    </div>
   </div>
 
   <div id="setup">
@@ -252,7 +284,37 @@
     };
     img.src = url;
   }
-  function setIdle(idle) { document.body.classList.toggle('idle', idle); }
+  // ---------- Horario y reposo ----------
+  var lastPlaying = Date.now(), wakeUntil = 0;
+  function setIdle(idle) {
+    document.body.classList.toggle('idle', idle);
+    if (!idle) lastPlaying = Date.now();
+  }
+  function prefs() {
+    return {
+      sched: store.get('sched') === '1',
+      from: store.get('from') || '08:00',
+      to: store.get('to') || '23:00',
+      idle: Number(store.get('idleMin')) || 5
+    };
+  }
+  function mins(hhmm) { var p = hhmm.split(':'); return Number(p[0]) * 60 + Number(p[1]); }
+  function inSchedule(p) {
+    if (!p.sched) return true;
+    var d = new Date(), n = d.getHours() * 60 + d.getMinutes(), a = mins(p.from), b = mins(p.to);
+    if (a === b) return true;
+    return a < b ? (n >= a && n < b) : (n >= a || n < b); // soporta horarios que cruzan la medianoche
+  }
+  function evalSleep() {
+    var p = prefs(), now = Date.now();
+    var idleTooLong = document.body.classList.contains('idle') && now - lastPlaying > p.idle * 60000;
+    var sleep = now > wakeUntil && (!inSchedule(p) || idleTooLong);
+    if (sleep === document.body.classList.contains('sleep')) return;
+    document.body.classList.toggle('sleep', sleep);
+    if (sleep) { $('menu').classList.remove('show'); releaseAwake(); }
+    else keepAwake();
+  }
+  setInterval(evalSleep, 15000);
 
   async function poll() {
     var wait = POLL_MS;
@@ -287,6 +349,8 @@
       if (/refresh|invalid_grant|revoked/i.test(e.message)) { logout(); $('err').textContent = 'La sesión expiró, vuelve a conectar.'; return; }
       wait = 10000; // sin internet: reintenta
     }
+    evalSleep();
+    if (document.body.classList.contains('sleep')) wait = Math.max(wait, 8000);
     setTimeout(poll, wait);
   }
 
@@ -298,7 +362,11 @@
   // Mantener la pantalla encendida
   var lock = null;
   async function keepAwake() {
+    if (document.body.classList.contains('sleep')) return;
     try { if ('wakeLock' in navigator && !lock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', function () { lock = null; }); } } catch (e) {}
+  }
+  function releaseAwake() {
+    try { if (lock) { lock.release(); lock = null; } } catch (e) {}
   }
   document.addEventListener('visibilitychange', function () { if (!document.hidden) keepAwake(); });
 
@@ -309,12 +377,35 @@
     clearTimeout(menuTimer);
     menuTimer = setTimeout(function () { $('menu').classList.remove('show'); }, 5000);
   }
-  document.addEventListener('click', function (e) {
+  document.addEventListener('click', function () {
+    if ($('setup').classList.contains('show') || $('prefs').classList.contains('show')) return;
+    if (document.body.classList.contains('sleep')) {
+      // Tocar la pantalla negra la enciende por 5 minutos
+      wakeUntil = Date.now() + 5 * 60000;
+      lastPlaying = Date.now();
+      evalSleep();
+      return;
+    }
     keepAwake();
-    if ($('setup').classList.contains('show')) return;
-    if (e.target.tagName === 'BUTTON') { showMenu(); return; }
     showMenu();
   });
+  $('bPrefs').onclick = function () {
+    var p = prefs();
+    $('pSched').checked = p.sched; $('pFrom').value = p.from; $('pTo').value = p.to; $('pIdle').value = p.idle;
+    $('menu').classList.remove('show');
+    $('prefs').classList.add('show');
+  };
+  $('pSave').onclick = function (e) {
+    e.stopPropagation();
+    store.set('sched', $('pSched').checked ? '1' : '0');
+    if ($('pFrom').value) store.set('from', $('pFrom').value);
+    if ($('pTo').value) store.set('to', $('pTo').value);
+    var m = Math.max(1, Math.min(120, Number($('pIdle').value) || 5));
+    store.set('idleMin', String(m));
+    $('prefs').classList.remove('show');
+    lastPlaying = Date.now(); wakeUntil = 0;
+    evalSleep();
+  };
   $('bMode').onclick = function () {
     var i = MODES.indexOf(currentMode());
     store.set('mode', MODES[(i + 1) % MODES.length]);
